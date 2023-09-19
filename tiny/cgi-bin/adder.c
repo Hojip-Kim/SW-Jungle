@@ -21,7 +21,7 @@ int main(void) {
       n2 = atoi(num2+1);
   }
   /* Make the response body */
-  sprintf(content, "QUERY_STRING=%s<p>", buf);
+  sprintf(content, "QUERY_STRING=%s&%s<p>", buf, p+1);
   sprintf(content, "%sWelcome to add.com: ", content);
   sprintf(content, "%sTHE Internet addition portal.\r\n<p>", content);
   sprintf(content, "%sThe answer is: %d + %d = %d\r\n<p>",

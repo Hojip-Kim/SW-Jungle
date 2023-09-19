@@ -11,9 +11,9 @@
 void doit(int fd);
 void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename, char *cgiargs);
-void serve_static(int fd, char *filename, int filesize, int is_head_method);
+void serve_static(int fd, char *filename, int filesize, char *method);
 void get_filetype(char *filename, char *filetype);
-void serve_dynamic(int fd, char *filename, char *cgiargs, int is_head_method);
+void serve_dynamic(int fd, char *filename, char *cgiargs, char *method);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
                  char *longmsg);
 
@@ -25,7 +25,7 @@ int main(int argc, char **argv) {
 
   /* Check command line args */
   if (argc != 2) {  // 입력 인자가 2개가 아니면
-    fprintf(stderr, "usage: %s <port>\n", argv[0]);
+    fprintf(stderr, "usage: %s <port>\n", argv[0]); // argv[0] = tiny
     exit(1);
   }
   /* 듣기 소켓 오픈 
@@ -38,19 +38,23 @@ int main(int argc, char **argv) {
     clientlen = sizeof(clientaddr);
     /* server는 accept함수를 호출해서 client로부터의 연결 요청을 기다린다.
      * client 소켓은 server 소켓의 주소를 알고 있으니까
-     * client에서 server로 넘어올 때 add 정보를 가지고 올 것이라고 가정
+     * client에서 server로 넘어올 때 addr 정보를 가지고 올 것이라고 가정
      * accept 함수는 연결되면 식별자 connfd를 return한다.
      */
-    connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);  // line:netp:tiny:accept
-    Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
-    printf("Accepted connection from (%s, %s)\n", hostname, port);
+    connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);  // 서버와 특정 클라이언트 간의 통신을 관리하는 파일 디스크립터 - connfd
+    Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0); 
+    /* Getnameinfo함수가 사용되면 hostname, port라는 변수명에 자동적으로 저장이 됨.(hostname, 포트번호)) */
+    printf("Accepted connection from (%s, %s)\n", hostname, port); // getnameinfo로 저장되었던 hostname과 port가 나옴(클라이언트)
     doit(connfd);   // line:netp:tiny:doit, connfd로 트랜잭션 수행
     Close(connfd);  // line:netp:tiny:close, connfd로 자신 쪽의 연결 끝 닫기
   }
 }
 
 /* client의 요청 라인을 확인하고 정적, 동적 콘텐츠를 확인하고 return */
-void doit(int fd) {  // fd는 connfd라는 것이 중요
+void doit(int fd) {  /* fd는 connfd라는 것이 중요(서버와 클라이언트간의 통신을 관리하는 파일 디스크럽터임. => 클라이언트와 서버간 통신할수있는,
+  다른 서버와 클라이언트간 개별적으로 분별할 수 있는 정수값임. 커넥트될 때마다 새로운 정수값이 생성되어 고유번호로 됨. 이러한 고유값을 토대로
+  여러 시스템콜함수를 사용가능(read, write, close, select, poll 등) => 가능한 가장 작은값을 할당해주려하지만,
+  0, 1, 2는 각각 stdin, stdout, stderr이므로 이 숫자 빼고 다른숫자를 할당.  */
   int is_static;
   struct stat sbuf;
   char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
@@ -60,49 +64,51 @@ void doit(int fd) {  // fd는 connfd라는 것이 중요
   /* Read request line and headers */
   // 요청 라인을 읽고 분석한다.
   // 식별자 fd를 rio_t 타입의 읽기 버퍼(rio)와 연결
-  // 한 개의 빈 버퍼를 설정하고, 이 버퍼와 한 개의 오픈한 파일 식별자를 연결
+  // 한 개의 빈 버퍼를 설정하고, 이 버퍼와 한 개의 오픈한 파일 식별자(file descriptor)를 연결
   Rio_readinitb(&rio, fd);
   // 다음 텍스트 줄을 파일 rio에서 읽고, 이를 메모리 위치 buf로 복사하고, 텍스트 라인을 NULL로 종료시킨다.
   Rio_readlineb(&rio, buf, MAXLINE);
   printf("Request headers:\n");
   printf("%s", buf);  // 요청된 라인을 printf로 보여준다. (최초 요청 라인 : GET/HTTP/1.1)
   sscanf(buf, "%s %s %s", method, uri, version);  // buf의 내용을 method, uri, version이라는 문자열에 저장한다.
-  // if (strcasecmp(method, "GET")) {  // GET, HEAD 메소드만 지원한다. (두 문자가 같으면 0)
-  //   clienterror(fd, method, "501", "Not implemented", "Tiny does not implement this method");  // 다른 메소드가 들어올 경우, 에러를 출력하고
-  //   return;  // main으로 return시킨다.
-  // }
-  int is_head_method;
-  if (strcasecmp(method, "HEAD") == 0) {
-    is_head_method = 1;
+  if (strcasecmp(method, "GET") && strcasecmp(method, "HEAD")) {  // GET, HEAD 메소드만 지원한다. (두 문자가 같으면 0)
+    clienterror(fd, method, "501", "Not implemented", "Tiny does not implement this method");  // 다른 메소드가 들어올 경우, 에러를 출력하고
+    return;  // main으로 return시킨다.
   }
-  printf("is_head_method : %d\n", is_head_method);
+  // int is_head_method;
+  // if (strcasecmp(method, "HEAD") == 0) {
+  //   is_head_method = 1;
+  // }
+  // printf("is_head_method : %d\n", is_head_method);
   read_requesthdrs(&rio);  // 요청 라인을 제외한 요청 헤더를 출력한다.
 
   /* Parse URI from GET request */
   // URI를 filename과 CGI argument string으로 parse하고
   // request가 정적인지 동적인지 확인하는 flag를 return한다. (1이면 정적 컨텐츠)
   is_static = parse_uri(uri, filename, cgiargs);  // uri 내용을 바탕으로 filename, cgiargs가 채워진다.
-  if (stat(filename, &sbuf) < 0) {  // disk에 파일이 없다면 filename을 sbuf에 넣는다. 종류, 크기 등이 sbuf에 저장된다. 성공시 0 실패시 -1
+  //cgiargs는 filename?first=200&second=300 의 형태에서 ?뒤를 의미함.
+  if (stat(filename, &sbuf) < 0) {  // disk에 파일이 있다면 filename 정보를 sbuf에 넣는다. 종류, 크기 등이 sbuf에 저장된다. 성공시 0 실패시 -1
     clienterror(fd, filename, "404", "Not found", "Tiny couldn't find this file");
     return;
     }
+// 여기서 sbuf에 filename의 정보(st_mode(파일타입, 권한등이 나타남), st_size(파일의 사이즈) 등과같은)가 담김.
 
-  if (is_static) { /* Serve static content */
-    // S_ISREG : 파일 종류 확인 - 일반(regular) 파일인지 판별
+  if (is_static) { /* Serve static content */ // 정적파일인지 동적파일인지 확인. => 정적파일(1)이라면 TRUE호출
+    // S_ISREG : 파일 종류 확인 - 일반(regular) 파일인지 판별 => S_ISRGE(sbuf.st_mode) => 일반파일이면 true
     // S_IRUSR : 읽기 권한을 가지고 있는지 판별
-    if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {  // 일반 파일이 아니거나 읽기 권한이 없으면
+    if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {  // 일반 파일이 아니거나 소유자 읽기 권한이 없으면
       clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't read the file");  // 읽을 수 없다고 출력한다.
       return;
     }
-    serve_static(fd, filename, sbuf.st_size, is_head_method);  // fd : connfd 정적 컨텐츠를 client에게 제공
+    serve_static(fd, filename, sbuf.st_size, method);  // fd : connfd 정적 컨텐츠를 client에게 제공
   }
   else { /* Serve dynamic content */
     // 파일이 실행 가능한지 검증
-    if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
+    if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {  //일반파일이 아니거나 소유자 실행권한이 없으면
       clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program");
       return;
     }
-    serve_dynamic(fd, filename, cgiargs, is_head_method);  // 실행 가능하다면 동적 컨텐츠를 client에게 제공
+    serve_dynamic(fd, filename, cgiargs, method);  // 실행 가능하다면 동적 컨텐츠를 client에게 제공
   }
 }
 
@@ -150,13 +156,13 @@ int parse_uri(char *uri, char *filename, char *cgiargs) {
   char *ptr;
   // strstr (대상 문자열, 검색할 문자열) -> 검색된 문자열(대상 문자열) 뒤에 모든 문자열이 나오게 된다.
   // uri에서 "cgi-bin"이라는 문자열이 없으면, static content
-  if (!strstr(uri, "cgi-bin")) { /* Static content */
+  if (!strstr(uri, "cgi-bin")) { /* Static content => uri에는 /some/path/file.html와 같은 부분만들어있음. */
     strcpy(cgiargs, "");  // cgiargs 인자 string을 지운다.
     strcpy(filename, ".");  // 상대 리눅스 경로 이름으로 변환 ex) '.'
     strcat(filename, uri);  // 상대 리눅스 경로 이름으로 변환 ex) '.' + '/index.html'
-    if (uri[strlen(uri)-1] == '/')  // uri가 '/'문자로 끝난다면
-      strcat(filename, "adder.html");  // 기본 파일 이름인 home.html을 추가한다. -> 11.10 과제에서 adder.html로 변경
-    return 1;
+    if (uri[strlen(uri)-1] == '/')  // uri가 '/'문자로 끝난다면 
+      strcat(filename, "home.html");  // 기본 파일 이름인 home.html을 추가한다. -> 11.10 과제에서 adder.html로 변경
+    return 1; // 1을 리턴하면 정적파일이라는것.
   }
   // uri에서 "cgi-bin"이라는 문자열이 존재한다면
   // 모든 CGI 인자들을 추출한다.
@@ -172,11 +178,11 @@ int parse_uri(char *uri, char *filename, char *cgiargs) {
     // 나머지 URI 부분을 상대 리눅스 파일 이름으로 변환
     strcpy(filename, ".");
     strcat(filename, uri);
-    return 0;
+    return 0; // 동적파일 리턴(0)
   }
 }
 // static 컨텐츠를 요청하면 서버가 disk에서 파일을 찾아서 메모리 영역으로 복사하고, 복사한 것을 client fd로 복사
-void serve_static(int fd, char *filename, int filesize, int is_head_method) {
+void serve_static(int fd, char *filename, int filesize, char *method) { // 여기서의 fd : connectfd임.
   int srcfd;
   char *srcp, filetype[MAXLINE], buf[MAXBUF];
 
@@ -186,9 +192,9 @@ void serve_static(int fd, char *filename, int filesize, int is_head_method) {
   sprintf(buf, "HTTP/1.0 200 OK\r\n");
   sprintf(buf, "%sServer: Tiny Web Server\r\n", buf);
   sprintf(buf, "%sConnection: close\r\n", buf);  // while을 한 번 돌면 close가 되고, 새로 연결하더라도 새로 connect하므로 close가 default가 된다.
-  sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
+  sprintf(buf, "%sContent-length: %d\r\n", buf, filesize); // content-length를 filesize(파일크기)로.
   sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);  // 여기 \r\n 빈 줄 하나가 헤더 종료 표시
-  Rio_writen(fd, buf, strlen(buf));  // buf에서 strlen(buf) 바이트 만큼 fd로 전송한다.
+  Rio_writen(fd, buf, strlen(buf));  // buf에서 strlen(buf) 바이트 만큼 fd로 전송한다. => HTTP응답헤더를 클라이언트에게 전송.
   printf("Response headers:\n");
   printf("%s", buf);
 
@@ -233,8 +239,8 @@ void get_filetype(char *filename, char *filetype) {
     strcpy(filetype, "text/plain");
 }
 
-void serve_dynamic(int fd, char *filename, char *cgiargs, int is_head_method) {
-  char buf[MAXLINE], *emptylist[] = { NULL };
+void serve_dynamic(int fd, char *filename, char *cgiargs, char *method) {
+  char buf[MAXLINE], *emptylist[] = {NULL};
 
   /* Return first part of HTTP response */
   // 클라이언트에 성공을 알려주는 응답 라인을 보내는 것으로 시작
@@ -246,6 +252,7 @@ void serve_dynamic(int fd, char *filename, char *cgiargs, int is_head_method) {
   if (Fork() == 0) { /* Child */
     /* Real server would set all CGI vars here */
     setenv("QUERY_STRING", cgiargs, 1);
+    setenv("REQUEST_METHOD", method, 1);
     Dup2(fd, STDOUT_FILENO); /* Redirect stdout to client */
     Execve(filename, emptylist, environ); /* Run CGI program */
   }

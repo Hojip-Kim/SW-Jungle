@@ -18,13 +18,13 @@ void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
                  char *longmsg);
 
 int main(int argc, char **argv) {
-  int listenfd, connfd;
-  char hostname[MAXLINE], port[MAXLINE];
-  socklen_t clientlen;
-  struct sockaddr_storage clientaddr;
+  int listenfd, connfd; // 듣는자의 fd, connect과정에서의 기능을 할 수 있는 fd
+  char hostname[MAXLINE], port[MAXLINE]; // host의 name, port (연결을 요청하는)
+  socklen_t clientlen; // client의 socket length
+  struct sockaddr_storage clientaddr; // client의 socket address
 
   /* Check command line args */
-  if (argc != 2) {  // 입력 인자가 2개가 아니면
+  if (argc != 2) {  // 입력 인자가 2개가 아니면 (ex : ./tiny 8080)
     fprintf(stderr, "usage: %s <port>\n", argv[0]); // argv[0] = tiny
     exit(1);
   }
@@ -35,7 +35,7 @@ int main(int argc, char **argv) {
   printf("현재 port(argv[1]):%s\n", argv[1]); 
   listenfd = Open_listenfd(argv[1]);  // 8000 포트에 연결 요청을 받을 준비가 된 듣기 식별자 return
   while (1) {
-    clientlen = sizeof(clientaddr);
+    clientlen = sizeof(clientaddr); // client의 socket length임.
     /* server는 accept함수를 호출해서 client로부터의 연결 요청을 기다린다.
      * client 소켓은 server 소켓의 주소를 알고 있으니까
      * client에서 server로 넘어올 때 addr 정보를 가지고 올 것이라고 가정
@@ -55,8 +55,8 @@ void doit(int fd) {  /* fd는 connfd라는 것이 중요(서버와 클라이언�
   다른 서버와 클라이언트간 개별적으로 분별할 수 있는 정수값임. 커넥트될 때마다 새로운 정수값이 생성되어 고유번호로 됨. 이러한 고유값을 토대로
   여러 시스템콜함수를 사용가능(read, write, close, select, poll 등) => 가능한 가장 작은값을 할당해주려하지만,
   0, 1, 2는 각각 stdin, stdout, stderr이므로 이 숫자 빼고 다른숫자를 할당.  */
-  int is_static;
-  struct stat sbuf;
+  int is_static; // 정적요청인지 확인.
+  struct stat sbuf; 
   char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
   char filename[MAXLINE], cgiargs[MAXLINE];
   rio_t rio;

@@ -17,6 +17,7 @@ void serve_static(int clientfd, int fd);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
                  char *longmsg);
 void header_make(char *method, char *request_ip, char *user_agent_hdr, char *version, int clientfd, char *filename);
+void *thread(void *vargp);
 
 /* client의 요청 라인을 확인하고 정적, 동적 콘텐츠를 확인하고 return */
 void doit(int fd)
@@ -154,10 +155,12 @@ void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longms
 
 int main(int argc, char **argv)
 {
-  int listenfd, connfd;                  // listenfd : 프록시 듣기 식별자, connfd : 프록시 연결 식별자
+  int listenfd, *connfd;                  // listenfd : 프록시 듣기 식별자, connfd : 프록시 연결 식별자
   char hostname[MAXLINE], port[MAXLINE]; // 클라이언트에게 받은 uri정보를 담을 공간
   socklen_t clientlen;                   // 소켓 길이를 저장할 구조체
   struct sockaddr_storage clientaddr;    // 소켓 구조체 clientaddress 들어감
+
+  pthread_t tid;
 
   if (argc != 2)
   { // 입력인자가 2개인지 확인 => ./tiny 8080
@@ -166,27 +169,35 @@ int main(int argc, char **argv)
   }
   listenfd = Open_listenfd(argv[1]); // listen 소켓 오픈
 
-  /* 무한서버루프, 반복적으로 연결 요청을 접수 */
-  while (1)
+  /* 무한서버루프, 반복적으로 연결 요청을 접수, 여기서는 쓰레드로 병렬작업을 처리하지만, 멀티프로세스로 해도 됨( fork() ) */
+  while (1) 
   {
     clientlen = sizeof(clientaddr);
-    connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen); // 연결 요청 접수, socket address(SA)
+
+    connfd = malloc(sizeof(int)); // 쓰레드 경쟁상태를 피하기위한 동적할당을 해줌.
+
+    *connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen); // 연결 요청 접수, socket address(SA)
     // => 포트번호는 내가 정하고있고 사용자가 주소를 치면 받아서 비교후 연결
-    int PID;
-    PID = fork();
-    switch (PID)
-    {
-    case 0:
+    
       Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
       // 받은걸 토대로 호스트네임과 포트 저장
-
       printf("Accepted connection from (%s %s)\n", hostname, port);
 
-      doit(connfd);
-
-      Close(connfd);
-      exit(1);
-    }
+      Pthread_create(&tid, NULL, thread, (void *)connfd);
+      
+    
   }
-  Close(connfd);
+  return 0;
+}
+
+//쓰레드 함수 정의
+void *thread(void *vargp){
+    int connfd = *((int *)vargp);
+
+    doit(connfd);
+    Pthread_detach(Pthread_self());
+
+    Close(connfd);
+
+    return NULL;
 }
